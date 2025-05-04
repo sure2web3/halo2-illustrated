@@ -188,7 +188,7 @@ pub fn generate_constants<
 }
 ```
 
-### 2. Sponge
+### 3. Sponge
 [(Wikipedia)](https://en.wikipedia.org/wiki/Sponge_function)In cryptography, a sponge function or sponge construction is any of a class of algorithms with finite internal state that take an input bit stream of any length and produce an output bit stream of any desired length. Sponge functions have both theoretical and practical uses. They can be used to model or implement many cryptographic primitives, including cryptographic hashes, message authentication codes, mask generation functions, stream ciphers, pseudo-random number generators, and authenticated encryption.<sup>[[1]](https://eprint.iacr.org/2019/458)</sup>
 
 The sponge construction for hash functions. $P_i$ are blocks of the input string, $Z_i$ are hashed output blocks.
@@ -253,8 +253,11 @@ pub trait SpongeMode: private::SealedSpongeMode {}
 | Purpose | a. `SpongeMode` is a public trait that represents the state of the sponge.<br> b. It is implemented by the Absorbing and Squeezing types. | 
 | Relationship with `SealedSpongeMode` | `SpongeMode` inherits from `SealedSpongeMode`, so only types that implement `SealedSpongeMode` (i.e., `Absorbing` and `Squeezing`) can implement SpongeMode. |
 
-`Absorbing`<br>
+#### Absorbing
 ```rust
+/// The type used to hold sponge rate.
+pub(crate) type SpongeRate<F, const RATE: usize> = [Option<F>; RATE];
+
 /// The absorbing state of the `Sponge`.
 #[derive(Debug)]
 pub struct Absorbing<F, const RATE: usize>(pub(crate) SpongeRate<F, RATE>);
@@ -267,8 +270,94 @@ impl<F, const RATE: usize> SpongeMode for Absorbing<F, RATE> {}
 | Purpose | a. Represents the absorbing state of the sponge.<br> b. The sponge is in this state when it is absorbing input values. |
 | Fields | `SpongeRate<F, RATE>`: An array of size RATE that holds the absorbed values. Each element is an Option<F> to indicate whether it is occupied. |
 
-`Squeezing`<br>
+Methods<br>
 ```rust
+impl<F: fmt::Debug, const RATE: usize> Absorbing<F, RATE> {
+    /// Initializes an absorbing state with a single value.
+    pub(crate) fn init_with(val: F) -> Self {
+        /// 1. Calls init_empty to create an empty absorbing state.
+        let mut state = Self::init_empty();
+        /// 2. Absorbs the provided value val into the state using the absorb method.
+        state.absorb(val).expect("state is not full");
+        /// 3. If the state is already full (which shouldn't happen here), (TODO:)it panics with the message "state is not full".
+        state
+    }
+
+    /// Initializes an empty sponge in the absorbing state.
+    pub fn init_empty() -> Self {
+        /*
+            Self: Refers to the type for which the function is implemented (e.g., Absorbing<F, RATE>).
+            The constructor initializes a new instance of the type using the provided arguments.
+        */
+        Self(
+            /*
+                0..RATE: Creates an iterator that generates numbers from 0 (inclusive) to RATE (exclusive).
+                This is used to iterate RATE times, where RATE is a constant representing the sponge's rate (number of elements absorbed per round).
+            */
+            (0..RATE)
+                /*
+                    .map: A method that applies a closure (anonymous function) to each element of the iterator. 
+                    |_| None: The closure takes one argument (represented by _ because the value is unused). For each iteration, it returns None.
+                    This effectively creates an iterator that produces RATE None values.
+                */
+                .map(|_| None)
+                /*
+                    .collect: Consumes the iterator and collects its items into a collection.
+                    ::<Vec<_>>: Specifies the type of collection to create (in this case, a Vec). _ is a placeholder for the type of elements in the vector (inferred as Option<F>).
+                */
+                .collect::<Vec<_>>()
+                /*
+                    .try_into(): Attempts to convert the Vec<Option<F>> into an array of size RATE.
+                    This is necessary because the sponge's rate portion is represented as an array, not a vector.
+                */
+                .try_into()
+                /*
+                    .unwrap(): Extracts the value from a Result or Option, panicking if it is an error or None.
+                    In this case, it ensures that the conversion from Vec to an array succeeds. If the conversion fails (e.g., if the size does not match RATE), the program will panic.
+                */
+                .unwrap(),
+        )
+    }
+}
+
+impl<F, const RATE: usize> Absorbing<F, RATE> {
+    /// Attempts to absorb a value into the sponge state.
+    ///
+    /// Returns the value if it was not absorbed because the sponge is full.
+    pub fn absorb(&mut self, value: F) -> Result<(), F> {
+        /*
+            self refers to the current instance of the Absorbing struct.
+            self.0 refers to the first (and only) field of the Absorbing struct, which is the SpongeRate<F, RATE> array.
+            iter_mut creates a mutable iterator over the elements of the array, allowing each element to be modified.
+            is_none is a method provided by the Option type in Rust. It returns true if the Option is None (i.e., it does not contain a value) and false otherwise.
+        */
+        for entry in self.0.iter_mut() {
+            if entry.is_none() {
+                *entry = Some(value);
+                return Ok(());
+            }
+        }
+        // Sponge is full.
+        Err(value)
+    }
+
+    /// Exposes the inner state of the sponge.
+    ///
+    /// This is a low-level API, requiring a detailed understanding of this specific
+    /// Poseidon implementation to use correctly and securely. It is exposed for use by
+    /// the circuit implementation in `halo2_gadgets`, and may be removed from the public
+    /// API if refactoring enables the circuit implementation to move into this crate.
+    pub fn expose_inner(&self) -> &SpongeRate<F, RATE> {
+        &self.0
+    }
+}
+```
+
+#### Squeezing
+```rust
+/// The type used to hold sponge rate.
+pub(crate) type SpongeRate<F, const RATE: usize> = [Option<F>; RATE];
+
 /// The squeezing state of the `Sponge`.
 #[derive(Debug)]
 pub struct Squeezing<F, const RATE: usize>(pub(crate) SpongeRate<F, RATE>);
@@ -280,6 +369,345 @@ impl<F, const RATE: usize> SpongeMode for Squeezing<F, RATE> {}
 |--------|-------------|
 | Purpose | a. Represents the squeezing state of the sponge.<br> b. The sponge is in this state when it is extracting (squeezing) output values. |
 | Fields | `SpongeRate<F, RATE>`: An array of size RATE that holds the squeezed values. Each element is an Option<F> to indicate whether it is available for extraction. |
+
+Methods<br>
+```rust 
+impl<F: fmt::Debug, const RATE: usize> Squeezing<F, RATE> {
+    /// Initializes a full sponge in the squeezing state.
+    ///
+    /// This is a low-level API, requiring a detailed understanding of this specific
+    /// Poseidon implementation to use correctly and securely. It is exposed for use by
+    /// the circuit implementation in `halo2_gadgets`, and may be removed from the public
+    /// API if refactoring enables the circuit implementation to move into this crate.
+    pub fn init_full(vals: [F; RATE]) -> Self {
+        Self(
+            /*
+                .map(Some) applies the Some constructor to each element of the iterator.
+                It transforms each element of the iterator into an Option containing that element.
+
+                For example:
+                If vals = [val1, val2, val3], then .map(Some) produces: [Some(val1), Some(val2), Some(val3)]
+            */
+            vals.into_iter()
+                .map(Some)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+        )
+    }
+}
+
+impl<F, const RATE: usize> Squeezing<F, RATE> {
+    /// Attempts to squeeze a value from the sponge state.
+    ///
+    /// Returns `None` if the sponge is empty.
+    pub fn squeeze(&mut self) -> Option<F> {
+        for entry in self.0.iter_mut() {
+            /*
+                If the Option is Some(value), take:
+                    Replaces the Option with None.
+                    Returns the original value (value).
+                If the Option is None, take:
+                    Does nothing.
+                    Returns None.
+
+                let Some(inner) is a pattern matching construct in Rust.
+                It matches an Option value and extracts the inner value if the Option is Some.
+            */
+            if let Some(inner) = entry.take() {
+                return Some(inner);
+            }
+        }
+        // Sponge is empty.
+        None
+    }
+}
+```
+#### Sponge Methods or Functions
+##### poseidon_sponge
+This function applies the Poseidon permutation to the sponge's state and transitions it to the squeezing phase.
+```rust
+fn poseidon_sponge<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>(
+    /// The current state of the sponge, represented as an array of size T.
+    state: &mut State<F, T>,
+    /// An optional reference to the Absorbing state, which contains the input values to be absorbed.
+    input: Option<&Absorbing<F, RATE>>,
+    /// The MDS (Maximum Distance Separable) matrix used for mixing the state.
+    mds_matrix: &Mds<F, T>,
+    /// The round constants used in the Poseidon permutation.
+    round_constants: &[[F; T]],
+) -> Squeezing<F, RATE> {
+    /*
+        1. Absorb Input:
+        If input is provided, the function iterates over the state and input arrays.
+        Each element of the input is added to the corresponding element of the state.
+        The expect ensures that all input values are present (i.e., no None values).
+    */
+    if let Some(Absorbing(input)) = input {
+        // `Iterator::zip` short-circuits when one iterator completes, so this will only
+        // mutate the rate portion of the state.
+        for (word, value) in state.iter_mut().zip(input.iter()) {
+            *word += value.expect("poseidon_sponge is called with a padded input");
+        }
+    }
+
+    /*
+        2. Apply Poseidon Permutation:
+        Calls the permute function, which applies the Poseidon permutation to the state using the mds_matrix and round_constants.
+    */
+    permute::<F, S, T, RATE>(state, mds_matrix, round_constants);
+
+    /*
+        3. Prepare Squeezing State:
+        Creates an array output of size RATE, where each element is initialized to None.
+        Copies the first RATE elements of the state into the output array, wrapping each value in Some.
+    */
+    let mut output = [None; RATE];
+    for (word, value) in output.iter_mut().zip(state.iter()) {
+        *word = Some(*value);
+    }
+    /*
+        4. Return Squeezing State:
+        Returns a Squeezing struct containing the output array.    
+    */
+    Squeezing(output)
+}
+```
+##### permute
+We've seen that Poseidon uses a sponge construction to hash data, but the sponge alone is not enough to ensure security. This is a common theme in cryptography: we often need to add additional layers of complexity to ensure that our constructions are secure. Where one layer has a weakness, another layer can make up for it. The permutation is one such layer that Poseidon uses to ensure security.
+
+Permutation is like a blender<br>
+Imagine the Poseidon permutation as a process similar to using a kitchen blender to mix ingredients together. We can think of this in the context of the sponge construction, where the permutation is applied to the sponge's state to mix the input data with the existing state.<br>
+| Step | Analogy | Interpretation | 
+|------|-------------|---------|
+| 1. Initial Setup (State Initialization) | Think of foods and liquids inside of the blender's jar as a represention of the internal state of the hash function. When it's not blended, the ingredients are still separate and distinct, but once blended, they become a single mixture and are no longer distinguishable. The unblended mixture corresponds to the initial state in the Poseidon hash function. | Blender Jar (Sponge Capacity):<br><br> a. This blender jar effectively represents the internal state of the sponge, which is called its "capacity." This capacity includes both the part of the state that interacts with the input (like absorbing ingredients) and the part that does not.<br> b. In cryptographic terms, the capacity is crucial for security. It's like having a larger jar that ensures even after adding and mixing ingredients, there's still space left that never directly interacts with the ingredients you add later. This 'unused space' in the jar is what guarantees the security of the hash function. | 
+| 2. Adding Ingredients (Input Absorption) | Each piece of data to be hashed is akin to adding another ingredient to the blender's jar. In Poseidon, this involves integrating the input data into the internal state. | Amount of Food (Sponge Rate):<br><br> a. The amount of food you can add at once to the blender is like the "rate" of the sponge. It's the portion of the sponge's capacity that directly interacts with the input data (or ingredients).<br> b. In the sponge construction, you can only absorb (or add) a certain amount of data in each round, just like you can only add a certain amount of food to the blender at once without overfilling it. |
+| 3. Blending Process (Permutation Rounds) | a. The heart of the POSEIDON permutation is akin to the blending process. Here, the blender goes through several rounds of blending, each round mixing the ingredients thoroughly.<br> b. In POSEIDON, each round consists of a series of mathematical operations (like stirring, chopping, or grinding in a blender). These operations include:<br> b.1. Linear Mixing: Similar to a gentle stir or a slow blend, ensuring that all parts of the mixture are evenly combined.<br> b.2. Non-linear Transformation (S-Boxes): This is like a high-speed blend or pulse, creating complex interactions among the ingredients. It's where the non-linear S-boxes come into play, introducing complexity and security.<br> b.3. Fixed Permutation Pattern: Just like following a specific sequence in blending (like pulse, blend, stir), POSEIDON follows a fixed pattern of mixing and transforming in each round. | Blending/Pulsing (Permutation):<br><br> a. Once you've added food to the blender (absorbed data into the rate part of the sponge), you start the blending or pulsing. This is analogous to applying the permutation in the sponge construction. This step thoroughly mixes the contents (data) with the existing state.<br> b. The permutation (blending) ensures that the data is uniformly and complexly mixed, contributing to the hash function's security. | 
+| 4. Repeating the Rounds | Just as some recipes call for you to "blend until smooth", POSEIDON repeats its blending (permutation) rounds a set number of times to ensure thorough mixing and security. | |
+| 5. Final Product (Hash Output) | After the final round of blending, the mixture in the blender represents the transformed state. In the context of the full sponge construction, part of this state is then 'squeezed out' to produce the hash output. | Satisfaction and Emptying (Squeezing):<br><br> a. When you're satisfied with the blending (after sufficient permutations), you pour out the mix from the blender. In the sponge construction, this is akin to the squeezing phase, where part of the state (the equivalent of the mix you pour out) is read out as the hash result.<br> b. If your desired hash output is larger than what you can pour out in one go, you would blend again (apply another permutation) and pour out more, just like making multiple servings from a blender by blending and pouring in stages. |
+
+The ```permute``` function implements the Poseidon permutation, which is a cryptographic transformation applied to the internal state of the Poseidon sponge. This function mixes the state using round constants, an MDS matrix, and an S-box to ensure cryptographic security.
+| Parameter | Description |
+|-----------|-------------|
+| Full Rounds | apply a non-linear operation (like an S-box) to all elements of the state, offering high security. | 
+| Partial Rounds | apply this operation to only a subset of the state elements, enhancing efficiency.<br><br> This combination allows for maintaining strong cryptographic security while reducing the computational overhead typically associated with full rounds in every step. | 
+```rust
+/// Runs the Poseidon permutation on the given state.
+pub(crate) fn permute<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>(
+    /*
+        The internal state of the Poseidon sponge, represented as an array of T field elements.
+        This state is updated in-place during the permutation.
+    */
+    state: &mut State<F, T>,
+    /*
+        The Maximum Distance Separable (MDS) matrix, used to mix the state elements.
+        Ensures diffusion across the state.
+    */
+    mds: &Mds<F, T>,
+    /*
+        A 2D array of round constants, where each row corresponds to the constants for a single round.
+        These constants are added to the state to ensure security.
+    */
+    round_constants: &[[F; T]],
+) {
+    /*
+        The number of full rounds is divided into two halves (TODO:)(before and after the partial rounds).
+    */
+    let r_f = S::full_rounds() / 2;
+    /// The number of partial rounds.
+    let r_p = S::partial_rounds();
+
+    /*
+        Purpose: 
+        The apply_mds closure performs matrix multiplication between the MDS matrix (mds) and the sponge's state. This operation ensures diffusion, meaning that every element of the state is influenced by every other element, which is critical for the cryptographic security of the Poseidon permutation.
+
+        Process:
+        1. A new array new_state is initialized with zeros.
+        2. For each element i in the new_state, the value is computed as the dot product of the i-th row of the mds matrix and the state array.
+        3. This ensures that every element of the state is mixed with every other element.
+    */
+    let apply_mds = |state: &mut State<F, T>| {
+        let mut new_state = [F::ZERO; T];
+        // Matrix multiplication
+        /*
+            (Rust Syntax)
+            1. This pattern is necessary because the code is performing matrix multiplication, which requires explicit access to the indices of the mds matrix and the state array.
+            2. Clippy might incorrectly suggest using iterators instead of ranges, but this would not work for matrix multiplication.
+            3. The #[allow(clippy::needless_range_loop)] attribute disables this warning, allowing the code to use the range-based loop without triggering a lint.
+        */
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..T {
+            for j in 0..T {
+                new_state[i] += mds[i][j] * state[j];
+            }
+        }
+        *state = new_state;
+    };
+
+    /*
+        Purpose:
+        Executes a full round of the Poseidon permutation.
+
+        Steps:
+        1. Add Round Constants: For each element in the state, add the corresponding round constant (rc).
+        2. Apply S-box: Apply the non-linear S-box transformation to each element of the state.
+        3. Apply MDS Matrix: Mix the state using the MDS matrix.
+    */
+    let full_round = |state: &mut State<F, T>, rcs: &[F; T]| {
+        /*
+            Iterates over each element in the state and the corresponding round constant in rcs.
+            Adds the round constant (rc) to the state element (*word).
+            Applies the S-Box (S::sbox) to the result, which introduces non-linearity.
+        */
+        for (word, rc) in state.iter_mut().zip(rcs.iter()) {
+            /*
+                The S-Box (S::sbox) is a non-linear function applied to each element of the state.
+                In this case, the S-Box is defined as ( x -> x^5 ), which is efficient in finite fields and provides strong non-linearity.
+
+                so here is (*word +rc)  -> (*word + rc)^5
+
+                Since word is a mutable reference to an element of state, any modification to *word directly updates the state array. Therefore, the line *word = S::sbox(*word + rc); modifies the state in-place.
+            */
+            *word = S::sbox(*word + rc);
+        }
+        /*
+            Applies the Maximum Distance Separable (MDS) matrix to the state.
+            This is a linear transformation that ensures mixing (diffusion) of the state elements.
+        */
+        apply_mds(state);
+    };
+
+    /*
+        Purpose:
+        Executes a partial round of the Poseidon permutation.
+
+        Steps:
+        1. Add Round Constants: For each element in the state, add the corresponding round constant (rc).
+        2. Apply S-box to the First Element: Apply the non-linear S-box transformation only to the first element of the state.
+        3. Apply MDS Matrix: Mix the state using the MDS matrix.
+    */
+    let part_round = |state: &mut State<F, T>, rcs: &[F; T]| {
+        for (word, rc) in state.iter_mut().zip(rcs.iter()) {
+            *word += rc;
+        }
+        // In a partial round, the S-box is only applied to the first state word.
+        state[0] = S::sbox(state[0]);
+        apply_mds(state);
+    };
+
+    /*
+        Purpose:
+        Executes the sequence of full and partial rounds using the provided round constants.
+
+        Steps:
+        1. First Half of Full Rounds: Use iter::repeat to repeat the full_round function r_f times.
+        2. Partial Rounds: Use iter::repeat to repeat the part_round function r_p times.
+        3. Second Half of Full Rounds: Use iter::repeat to repeat the full_round function r_f times.
+        4. Zip with Round Constants: Pair each round function with the corresponding round constants.
+        5. Apply Rounds: Use .fold to iteratively apply each round function to the state.
+
+        (Rust Syntax)
+        1. iter::empty()
+            Purpose: Creates an empty iterator that produces no elements.
+            Syntax: iter is a module in Rust's standard library that provides iterator-related utilities.
+            empty() is a function that returns an iterator with no elements.
+            Why Use It?: It serves as the starting point for chaining multiple iterators together.
+        2. .chain(...)
+            Purpose:
+            Combines two iterators into a single iterator.
+            The resulting iterator first produces all elements from the first iterator, then all elements from the second iterator.
+            Syntax:
+            .chain(other_iterator) takes another iterator as an argument.
+            Usage in Code:
+            The code chains three iterators:
+            An iterator that repeats the full_round function r_f times.
+            An iterator that repeats the part_round function r_p times.
+            Another iterator that repeats the full_round function r_f times.
+        3. iter::repeat(...)
+            Purpose:
+            Creates an infinite iterator that repeatedly produces the same value.
+            Syntax:
+            iter::repeat(value) takes a value and returns an iterator that infinitely repeats it.
+            Usage in Code:
+            iter::repeat(&full_round as &dyn Fn(&mut State<F, T>, &[F; T])):
+            Repeats a reference to the full_round function, cast as a dynamic function pointer (&dyn Fn).
+            iter::repeat(&part_round as &dyn Fn(&mut State<F, T>, &[F; T])):
+            Repeats a reference to the part_round function, cast as a dynamic function pointer.
+        4. .take(...)
+            Purpose:
+            Limits the number of elements produced by an iterator.
+            Syntax:
+            .take(n) takes an integer n and returns an iterator that produces at most n elements from the original iterator.
+            Usage in Code:
+            .take(r_f):
+            Limits the infinite iterator created by iter::repeat to produce exactly r_f elements.
+            .take(r_p):
+            Limits the infinite iterator to produce exactly r_p elements.
+        5. .zip(...)
+            Purpose:
+            Combines two iterators into a single iterator of pairs.
+            The resulting iterator produces tuples (a, b), where a is from the first iterator and b is from the second iterator.
+            Syntax:
+            .zip(other_iterator) takes another iterator as an argument.
+            Usage in Code:
+            .zip(round_constants.iter()):
+            Combines the iterator of round functions (full_round and part_round) with the iterator of round constants (round_constants.iter()).
+            Produces pairs (round_function, round_constants).
+        6. .fold(...)
+            Purpose:
+            Reduces an iterator to a single value by repeatedly applying a closure.
+            Syntax:
+            .fold(initial_value, closure):
+            initial_value: The starting value for the reduction. (the param state in the permute function)
+            closure: A function that takes two arguments:
+            The current accumulator value.
+            The next element from the iterator.
+            The closure returns the updated accumulator value.
+            Usage in Code:
+            .fold(state, |state, (round, rcs)| { ... }):
+            Starts with the initial state.
+            For each pair (round, rcs) produced by the iterator:
+            Calls the round function with the current state and rcs (round constants).
+            Updates the state in-place.
+            Returns the final state after all iterations.
+        7. &full_round as &dyn Fn(...)
+            Purpose:
+            Casts the full_round function to a dynamic function pointer (&dyn Fn).
+            Why Use It?:
+            The chain and zip operations require iterators that produce elements of the same type.
+            By casting both full_round and part_round to &dyn Fn, the code ensures that they have the same type.
+        8. round(state, rcs)
+            Purpose:
+            Calls the round function (either full_round or part_round) with the current state and rcs (round constants).
+            How It Works:
+            round is a function reference produced by the iterator.
+            state is the mutable state of the Poseidon sponge.
+            rcs is the current set of round constants.
+        9. state
+            Purpose:
+            Represents the internal state of the Poseidon sponge.
+            It is updated in-place during each round of the permutation.
+            How It Works:
+            The fold operation repeatedly updates the state by applying the round function.
+
+            the state in |state, (round, rcs)| { round(state, rcs); state } is not directly returned after each iteration. Instead, the state is updated in-place during each iteration, and the updated state is passed to the next iteration of the .fold method. The final state is returned only after all iterations are complete.
+    */
+    iter::empty()
+        .chain(iter::repeat(&full_round as &dyn Fn(&mut State<F, T>, &[F; T])).take(r_f))
+        .chain(iter::repeat(&part_round as &dyn Fn(&mut State<F, T>, &[F; T])).take(r_p))
+        .chain(iter::repeat(&full_round as &dyn Fn(&mut State<F, T>, &[F; T])).take(r_f))
+        .zip(round_constants.iter())
+        .fold(state, |state, (round, rcs)| {
+            round(state, rcs);
+            state
+        });
+}
+```
+##### new
+
+##### absorb
+##### finish_absorbing
+##### squeeze 
 
 ### 3. Hash
 ```rust
