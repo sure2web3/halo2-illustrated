@@ -1,7 +1,74 @@
 # The Poseidon algebraic hash function
 
-## Relative struct or trait
+- [Constants and Matrices](#constants-and-matrices)<br>
+    - [Pasta Elliptic Curves](#pasta-elliptic-curves)<br>
+    - [Prime-order curves](#prime-order-curves)<br>
+- [Relative struct or trait](#relative-struct-or-trait)<br>
+    - [1. Domain](#1-domain)<br>
+    - [2. Spec](#2-spec)<br>
+    - [3. Sponge](#3-sponge)<br>
+    - [4. Hash](#4-hash)<br>
+## Constants and Matrices
+There are two kinds of constants for the Poseidon in halo2.<br>
+| Type | Description | File |
+|------|-------------|-------------|
+| pallas::Base | Constants for using Poseidon with the Pallas field. | halo2_poseidon/src/fp.rs |
+| vesta::Base | Constants for using Poseidon with the Vesta field. | halo2_poseidon/src/fp.rs |
 
+The constants and matrices in this code are precomputed and hardcoded for efficiency. Take the pallas::Base type as an example, they include:
+| Type | Description | Purpose | Structure in halo2 | Representation in halo2 | 
+|------|-------------|-------------|-------------|-------------|
+| Round Constants (ROUND_CONSTANTS) | Used in each round of the Poseidon permutation to ensure cryptographic security. | a. Round constants are added to the state in each round of the Poseidon permutation.<br> b. They ensure that the permutation is unique for each round, preventing attacks that exploit symmetry or predictability in the permutation. | a 2D array with 64 rows and 3 columns:<br> a. Each row corresponds to a single round of the Poseidon permutation.<br> b. Each column corresponds to one element of the state (the state has 3 elements in this configuration). | Each constant is represented as a `pallas::Base` element, which is an element of the finite field over which the Pallas curve is defined. | 
+| MDS Matrix (MDS) | A mixing matrix that ensures diffusion across the state. | a. The Maximum Distance Separable (MDS) matrix is a linear transformation applied to the state in each round of the Poseidon permutation.<br> b. It ensures diffusion, meaning that every element of the state influences every other element. This is critical for cryptographic security. | a. a 3x3 matrix, where each element is a `pallas::Base` field element.<br> b. The matrix is applied to the state using matrix multiplication: new_state[i] = $\sum_{j=0}^{2} \text{MDS}[i][j] \cdot \text{state}[j]$ | a. The MDS matrix is carefully chosen to maximize diffusion while being efficient to compute.<br> b. It is invertible, which ensures that the Poseidon permutation is reversible (a requirement for cryptographic permutations). |
+| Inverse MDS Matrix (MDS_INV) | The inverse of the MDS matrix, which may be used in certain applications. | a. The inverse MDS matrix is the inverse of the MDS matrix.<br> b. It may be used in certain applications where the inverse transformation is required, such as in cryptographic protocols that involve reversing the Poseidon permutation. | a. a 3x3 matrix, with each element being a `pallas::Base` field element.<br> b. It satisfies the property: $[ MDS_INV \cdot MDS = I ]$ where ( $I$ ) is the identity matrix. | 
+
+How to create these constants and matrices ?<br>
+* The constants in this file can be reproduced using a Sage script provided in the [pasta-hadeshash](https://github.com/daira/pasta-hadeshash) repository. The script generates the round constants and MDS matrix based on the Posei don specification.
+```bash
+$ sage generate_parameters_grain.sage 1 0 255 3 8 56 0x40000000000000000000000000000000224698fc094cf91b992d30ed00000001
+```
+Parameters Introduction （[parameters](https://github.com/daira/pasta-hadeshash/blob/master/code/parameters.txt)
+| Parameter | Description |
+|-----------|-------------|
+| 1 - $GF(p)$ | a. GF(p) refers to a Galois Field of prime order p.<br> b. Specifies that the Poseidon hash function will operate over a prime field ( $\mathbb{F}_p$ ).<br> c. ( $\mathbb{F}_p$ ) is a finite field where arithmetic is performed modulo a prime number ( $p$ ). | 
+| 0 - $x^\alpha$ | a. Specifies the S-box used in the Poseidon permutation.<br> b. $x^\alpha$ is the non-linear transformation applied to elements of the state during the permutation.<br> c. In this case, 0 indicates that the S-box is ( x^5 ), which is efficient in finite fields and provides strong non-linearity. | 
+| 255 - Field Size in Bits | a. Specifies the size of the field in bits.<br> b. The field size is 255 bits, meaning the prime ( $p$ ) defining the field is a 255-bit number. | 
+| 3 - Width | a. Specifies the width of the Poseidon state, i.e., the number of elements in the state.<br> b. A width of 3 means the state consists of 3 field elements. |
+| 8 - $R_F$ | a. Specifies the number of full rounds in the Poseidon permutation.<br> b. In a full round: The S-box is applied to all elements of the state. The MDS matrix is applied to mix the state.<br> c. Full rounds ensure strong non-linearity across the entire state. | 
+| 56 - $R_P$ | a. Specifies the number of partial rounds in the Poseidon permutation.<br> b. In a partial round: The S-box is applied to only the first element of the state. The MDS matrix is applied to mix the state.<br> c. Partial rounds reduce computational cost while maintaining sufficient non-linearity and diffusion. |
+| 0x40000000000000000000000000000000224698fc094cf91b992d30ed00000001 - Field Size | a. Specifies the prime ( $p$ ) that defines the finite field ( $\mathbb{F}_p$ ).<br> b. This is a 255-bit prime number: [ $p = 2^{254} + 0x224698fc094cf91b992d30ed00000001$ ]<br> c. All arithmetic operations (addition, multiplication, etc.) in the Poseidon hash function are performed modulo this prime. |
+
+### Pasta Elliptic Curves
+The Pasta elliptic curves are a pair of cryptographic curves designed for use in zero-knowledge proofs (ZKPs) and other cryptographic applications. These curves are specifically optimized for efficiency and security in zk-SNARKs (Zero-Knowledge Succinct Non-Interactive Arguments of Knowledge) and recursive proof systems.<br>
+
+Key Features of Pasta Curves:<br>
+| Feature | Description |
+|---------|-------------|
+| Cycle-Friendly Curves | a. Pasta curves consist of two elliptic curves:<br> a.1. Pallas: Defined over the scalar field of the Vesta curve.<br> a.2. Vesta: Defined over the scalar field of the Pallas curve.<br> b. These curves form a "curve cycle", meaning the scalar field of one curve is the base field of the other. This property is particularly useful for recursive proof systems, where one proof verifies another proof. | 
+| Prime-Order Curves | Both Pallas and Vesta are prime-order curves, which ensures strong security properties for cryptographic operations. | 
+| Finite Field Arithmetic | The curves are defined over finite fields, enabling efficient arithmetic operations required for cryptographic computations. | 
+| Optimized for zk-SNARKs | a. Pasta curves are designed to be efficient in zk-SNARK systems like Halo 2, which is a proving system for zero-knowledge proofs.<br> b. They are optimized for performance in both proof generation and verification. |
+| Security | The curves are designed to provide strong security guarantees against known cryptographic attacks, such as those targeting elliptic curve discrete logarithms. |
+
+#### Prime-order curves
+Prime-order curves ensure strong security properties for cryptographic operations because of the following reasons:<br> 
+| Reason | Description | Why is this important? | 
+|--------|-------------|-------------|
+| No Small Subgroups | a. A prime-order curve has a group order ( q ), where ( q ) is a prime number.<br> b. This ensures that the only subgroups of the curve are the trivial subgroup (containing just the identity element) and the entire group itself. | a. In cryptographic operations, small subgroups can lead to vulnerabilities such as small subgroup attacks, where an attacker exploits the existence of small subgroups to gain information about private keys.<br> b. Prime-order curves eliminate this risk because there are no small subgroups. |
+| Uniform Distribution of Points | a. On a prime-order curve, every non-identity point generates the entire group when multiplied by integers (i.e., it is a generator of the group).<br> b. This ensures that the points on the curve are uniformly distributed, which is critical for cryptographic protocols like Diffie-Hellman key exchange and Elliptic Curve Digital Signature Algorithm (ECDSA). | Uniform distribution ensures that cryptographic operations are resistant to statistical attacks, where an attacker might exploit non-uniformity to predict private keys. | 
+| Hardness of the Discrete Logarithm Problem (DLP) | a. The security of elliptic curve cryptography (ECC) relies on the Elliptic Curve Discrete Logarithm Problem (ECDLP), which is the problem of finding ( $k$ ) given ( $P$ ) and ( $Q = kP$ ), where ( $P$ ) and ( $Q$ ) are points on the curve.<br> b. On a prime-order curve, the ECDLP is maximally hard because the group order ( $q$ ) is prime, and there are no divisors of ( $q$ ) that could simplify the problem. | If the group order is not prime, the ECDLP can sometimes be reduced to smaller subgroups, making it easier to solve and compromising security. | 
+| Simplified Security Analysis | Prime-order curves simplify the security analysis of cryptographic protocols because there are no edge cases involving small subgroups or composite group orders. | This reduces the likelihood of implementation errors and ensures that the cryptographic system behaves as expected under all conditions. | 
+| Resistance to Invalid Curve Attacks | a. In some cases, an attacker might try to use a point that does not belong to the intended curve (e.g., a point on a curve with a different order) to exploit weaknesses in the protocol.<br> b. Prime-order curves mitigate this risk because the group structure is simple, and invalid points are easier to detect and reject. | |
+| Strong Security for Zero-Knowledge Proofs | a. Prime-order curves like Pallas and Vesta are particularly well-suited for zero-knowledge proofs and SNARKs (Succinct Non-Interactive Arguments of Knowledge).<br> b. These protocols often rely on the uniformity and simplicity of the group structure to ensure soundness and zero-knowledge properties. | |
+
+Prime-order curves ensure security by:<br>
+* Eliminating small subgroups.
+* Providing uniform distribution of points.
+* Maximizing the hardness of the discrete logarithm problem.
+* Simplifying security analysis.
+* Mitigating invalid curve attacks.
+
+## Relative struct or trait
 ### 1. Domain
 ```rust
 /// A domain which a Poseidon hash function used.
@@ -162,6 +229,20 @@ pub fn generate_constants<
     let r_f = S::full_rounds();
     let r_p = S::partial_rounds();
 
+    /*
+        (in halo2_poseidon/src/grain.rs)
+
+        pub(super) enum SboxType {
+            /// x^alpha
+            Pow,
+            /// x^(-1)
+            #[allow(dead_code)]
+            Inv,
+        }
+
+        (Rust syntax)
+        #[allow(dead_code)] is an attribute that suppresses the compiler warning for unused code. Specifically, it prevents the compiler from issuing a warning when a function, struct, enum variant, or other code element is defined but not used anywhere in the program.
+    */
     let mut grain = grain::Grain::new(SboxType::Pow, T as u16, r_f as u16, r_p as u16);
 
     let round_constants = (0..(r_f + r_p))
@@ -217,7 +298,15 @@ pub(crate) struct Sponge<
     const RATE: usize,
 > {
     mode: M,
+    /*
+        /// The type used to hold permutation state.
+        pub type State<F, const T: usize> = [F; T];
+    */
     state: State<F, T>,
+    /*
+        /// The type used to hold the MDS matrix and its inverse.
+        pub type Mds<F, const T: usize> = [[F; T]; T];
+    */
     mds_matrix: Mds<F, T>,
     round_constants: Vec<[F; T]>,
     _marker: PhantomData<S>,
@@ -424,6 +513,12 @@ impl<F, const RATE: usize> Squeezing<F, RATE> {
 }
 ```
 #### Sponge Methods or Functions
+The use of Absorbing and Squeezing as distinct types for the mode ensures that the sponge's behavior is state-specific, explicit, and type-safe.
+| Type | Description | Methods |
+|------|-------------|-------------|
+| `Sponge<F, S, Absorbing<F, RATE>, T, RATE>` | a. Represents the sponge in the absorbing state.<br> b. Used for collecting input elements. | `new`, `absorb`, `finish_absorbing` |
+| `Sponge<F, S, Squeezing<F, RATE>, T, RATE>` | a. Represents the sponge in the squeezing state.<br> b. Used for producing output elements. | `squeeze` |
+
 ##### poseidon_sponge
 This function applies the Poseidon permutation to the sponge's state and transitions it to the squeezing phase.
 ```rust
@@ -704,12 +799,207 @@ pub(crate) fn permute<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE:
 }
 ```
 ##### new
+| Detail | Description |
+|--------|-------------|
+| Purpose | a. Initializes a new sponge in the `Absorbing` state.<br> b. Sets up the internal state, MDS matrix, and round constants. |
+| Steps | a. Calls `S::constants()` to generate the round constants and MDS matrix.<br> b. Initializes the sponge mode as `Absorbing` with an empty rate portion.<br> c. Sets the initial state, with the `RATE`-th element set to the `initial_capacity_element`. |
+```rust
+impl<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>
+    Sponge<F, S, Absorbing<F, RATE>, T, RATE>
+{
+    /// Constructs a new sponge for the given Poseidon specification.
+    pub(crate) fn new(initial_capacity_element: F) -> Self {
+        /// constants(): Generates `(round_constants, mds, mds^-1)` corresponding to this specification.
+        let (round_constants, mds_matrix, _) = S::constants();
+        /*
+            1. Represents the current mode of the sponge (either Absorbing or Squeezing).
+            2. Determines whether the sponge is absorbing input or squeezing output.
+        */
+        let mode = Absorbing([None; RATE]);
+        /*
+            1. The internal state of the sponge, represented as an array of T field elements.
+            2. This state is updated during the Poseidon permutation.
+        */
+        let mut state = [F::ZERO; T];
+        state[RATE] = initial_capacity_element;
 
+        Sponge {
+            mode,
+            state,
+            /*
+                1. The Maximum Distance Separable (MDS) matrix used in the Poseidon permutation.
+                2. Ensures diffusion across the state during the permutation.
+            */
+            mds_matrix,
+            /*
+                1. A vector of round constants used in the Poseidon permutation.
+                2. These constants are added to the state during each round of the permutation.
+            */
+            round_constants,
+            /*
+                1. A marker for the Poseidon specification type S.
+                2. Used to associate the sponge with a specific Poseidon parameterization without storing actual data.
+            */
+            _marker: PhantomData::default(),
+        }
+    }
+}    
+```
 ##### absorb
-##### finish_absorbing
-##### squeeze 
+| Detail | Description |
+|--------|-------------|
+| Purpose | Absorbs a single field element into the sponge's state. |
+| Steps | a. Iterates over the rate portion of the sponge's state.<br> b. If there is an empty slot (None), the value is absorbed into that slot.<br> c. If the rate portion is full: The Poseidon permutation is applied to process the absorbed values. The sponge is reinitialized with the new value. | 
 
-### 3. Hash
+Why Reset the Sponge Mode?<br>
+The sponge construction alternates between two phases:<br>
+| Phase | Description |
+|-------|-------------|
+| Absorbing Phase | a. Input elements are absorbed into the sponge's state.<br> b. This phase continues until the sponge's rate portion (the part of the state used for absorbing input) is full. |
+| Squeezing Phase | a. Once the sponge is full, the Poseidon permutation is applied to mix the state.<br> b. After the permutation, the sponge transitions to the squeezing phase, where output elements can be extracted. | 
+When the sponge is full during the absorbing phase, the Poseidon permutation (poseidon_sponge) is applied to mix the state. After this, the sponge must be reset to allow further absorption of input elements. This is achieved by reinitializing the sponge mode with Absorbing::init_with(value).
+
+What Does Absorbing::init_with(value) Do?<br>
+| Step | Description |
+|------|--------------|
+| 1 | Initializes a new absorbing state (`pub struct Absorbing<F, const RATE: usize>`) for the sponge. |
+| 2 | Sets the first entry of the sponge's rate portion (`self.mode.0`) to the given value (value). |
+| 3 | Leaves the remaining entries in the rate portion empty (None). |
+
+The sponge construction is designed to handle input streams of arbitrary length.
+By resetting the rate portion after each permutation, the sponge can process input in chunks, regardless of the total input size.
+
+```rust
+impl<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>
+    Sponge<F, S, Absorbing<F, RATE>, T, RATE>
+{
+    /// Absorbs an element into the sponge.
+    pub(crate) fn absorb(&mut self, value: F) {
+        for entry in self.mode.0.iter_mut() {
+            if entry.is_none() {
+                *entry = Some(value);
+                return;
+            }
+        }
+
+        // We've already absorbed as many elements as we can
+        /// poseidon_sponge: This function applies the Poseidon permutation to the sponge's state and transitions it to the squeezing phase.(But it doesn't mean that current absorb process is finished, so we need to call `init_with` to initializes an absorbing state with a single value, and then when we absorb enough elements again, we can still call `poseidon_sponge`).
+        /// We haven't finished absorbing yet, so we don't need the squeezing mode, that's why we use _ here.
+        let _ = poseidon_sponge::<F, S, T, RATE>(
+            &mut self.state,
+            Some(&self.mode),
+            &self.mds_matrix,
+            &self.round_constants,
+        );
+        
+        self.mode = Absorbing::init_with(value);
+    }
+    /*
+        For example :
+
+        Suppose the sponge has a rate of 3 (RATE = 3) and is currently in the absorbing phase:
+
+        Initial state: [None, None, None] (empty rate portion).
+        Input elements: [a, b, c, d].
+        Step 1: Absorb a
+            The first slot is empty, so a is absorbed.
+            State: [Some(a), None, None].
+        Step 2: Absorb b
+            The second slot is empty, so b is absorbed.
+            State: [Some(a), Some(b), None].
+        Step 3: Absorb c
+            The third slot is empty, so c is absorbed.
+            State: [Some(a), Some(b), Some(c)].
+        Step 4: Absorb d
+            The sponge is full, so the Poseidon permutation is applied to mix the state.
+            After the permutation, the sponge is reset using Absorbing::init_with(d).
+            State: [Some(d), None, None].
+    */
+}    
+```
+##### finish_absorbing
+| Detail | Description |
+|--------|-------------|
+| Purpose | Finalizes the absorption phase and transitions the sponge to the Squeezing state. |
+| Steps | a. Applies the Poseidon permutation to process the absorbed values.<br> b. Updates the sponge's mode to `Squeezing`. |
+```rust 
+impl<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>
+    Sponge<F, S, Absorbing<F, RATE>, T, RATE>
+{
+    /// Transitions the sponge into its squeezing state.
+    pub(crate) fn finish_absorbing(mut self) -> Sponge<F, S, Squeezing<F, RATE>, T, RATE> {
+        /// This function applies the Poseidon permutation to the sponge's state and transitions it to the squeezing phase.
+        /// In `finish_absorbing`, we need to transition the sponge from the absorbing state to the squeezing state, that's why we need to get the squeezing mode here, which is different from that in `absorb` function where we don't need to get the squeezing mode When it call `poseidon_sponge` function.
+        let mode = poseidon_sponge::<F, S, T, RATE>(
+            &mut self.state,
+            Some(&self.mode),
+            &self.mds_matrix,
+            &self.round_constants,
+        );
+
+        Sponge {
+            mode,
+            /*
+                The internal state of the sponge, represented as an array of T field elements.
+                This state is updated during the Poseidon permutation.
+            */
+            state: self.state,
+            /*
+                The Maximum Distance Separable (MDS) matrix used in the Poseidon permutation.
+                Ensures diffusion across the state during the permutation.
+            */
+            mds_matrix: self.mds_matrix,
+            /*
+                A vector of round constants used in the Poseidon permutation.
+                These constants are added to the state during each round of the permutation.
+            */
+            round_constants: self.round_constants,
+            _marker: PhantomData::default(),
+        }
+    }
+}    
+```
+##### squeeze 
+| Detail | Description |
+|--------|-------------|
+| Purpose | Extracts a single field element from the sponge's state. | 
+| Steps | a. Iterates over the rate portion of the sponge's state.<br> b. If a value is available, it is returned.<br> c. If all values have been squeezed: The Poseidon permutation is applied to generate new output values. | 
+
+```rust
+impl<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>
+    Sponge<F, S, Squeezing<F, RATE>, T, RATE>
+{
+    /// Squeezes an element from the sponge.
+    pub(crate) fn squeeze(&mut self) -> F {
+        loop {
+            for entry in self.mode.0.iter_mut() {
+                /*
+                    If the Option is Some(value), take:
+                        Replaces the Option with None.
+                        Returns the original value (value).
+                    If the Option is None, take:
+                        Does nothing.
+                        Returns None.
+                */
+                if let Some(e) = entry.take() {
+                    return e;
+                }
+            }
+
+            // We've already squeezed out all available elements
+            /// This function applies the Poseidon permutation to the sponge's state and transitions it to the squeezing phase.
+            self.mode = poseidon_sponge::<F, S, T, RATE>(
+                &mut self.state,
+                None,
+                &self.mds_matrix,
+                &self.round_constants,
+            );
+        }
+    }
+}
+```
+
+### 4. Hash
 ```rust
 /// A Poseidon hash function, built around a sponge.
 pub struct Hash<
