@@ -1,8 +1,9 @@
 # The Poseidon algebraic hash function
 
 - [Constants and Matrices](#constants-and-matrices)<br>
+    - [Galois Field (GF)](#galois-field-gf)<br>
     - [Pasta Elliptic Curves](#pasta-elliptic-curves)<br>
-    - [Prime-order curves](#prime-order-curves)<br>
+        - [Prime-order curves](#prime-order-curves)<br>
 - [Relative struct or trait](#relative-struct-or-trait)<br>
     - [1. Domain](#1-domain)<br>
     - [2. Spec](#2-spec)<br>
@@ -37,6 +38,63 @@ Parameters Introduction （[parameters](https://github.com/daira/pasta-hadeshash
 | 8 - $R_F$ | a. Specifies the number of full rounds in the Poseidon permutation.<br> b. In a full round: The S-box is applied to all elements of the state. The MDS matrix is applied to mix the state.<br> c. Full rounds ensure strong non-linearity across the entire state. | 
 | 56 - $R_P$ | a. Specifies the number of partial rounds in the Poseidon permutation.<br> b. In a partial round: The S-box is applied to only the first element of the state. The MDS matrix is applied to mix the state.<br> c. Partial rounds reduce computational cost while maintaining sufficient non-linearity and diffusion. |
 | 0x40000000000000000000000000000000224698fc094cf91b992d30ed00000001 - Field Size | a. Specifies the prime ( $p$ ) that defines the finite field ( $\mathbb{F}_p$ ).<br> b. This is a 255-bit prime number: [ $p = 2^{254} + 0x224698fc094cf91b992d30ed00000001$ ]<br> c. All arithmetic operations (addition, multiplication, etc.) in the Poseidon hash function are performed modulo this prime. |
+
+### Galois Field (GF)
+A Galois Field (GF), named after the mathematician Évariste Galois, is a finite field that contains a finite number of elements. It is a fundamental concept in mathematics and is widely used in cryptography, error correction codes, and other areas of computer science and engineering.<br>
+
+Key Properties of Galois Fields<br>
+1. Finite Number of Elements:<br>
+    * A Galois Field contains a finite number of elements, denoted as `q`.<br>
+    * The size of the field is always a power of a prime number: $q = p^n$, where:<br>
+        * `p` is a prime number (the characteristic of the field).
+        * `n` is a positive integer (the degree of the field).
+2. Field Properties:<br>
+    * A Galois Field satisfies all the properties of a field:
+        * Closure: Addition, subtraction, multiplication, and division (except by zero) always produce elements within the field.
+        * Associativity: Operations are associative.
+        * Commutativity: Addition and multiplication are commutative.
+        * Identity Elements: There are additive (0) and multiplicative (1) identities.
+        * Inverses: Every non-zero element has a multiplicative inverse.
+3. Two Types of Galois Fields:<br>
+    * GF(p): A Galois Field with `p` elements, where `p` is a prime number.
+        * Example: GF(7) contains `{0, 1, 2, 3, 4, 5, 6}` with arithmetic modulo `7`.
+    * GF($p^n$): A Galois Field with $p^n$ elements, where `n > 1`.
+        * These fields are extensions of GF(p) and are used in more complex applications like cryptography and error correction.
+
+Examples of Galois Fields<br>
+1. GF(2)
+    * The simplest Galois Field with two elements: `{0, 1}`.         
+    * Arithmetic is performed modulo `2`:
+        * Addition: `0 + 0 = 0`, `1 + 1 = 0`, `0 + 1 = 1`, `1 + 0 = 1`.
+        * Multiplication: `0 * 0 = 0`, `1 * 1 = 1`, `0 * 1 = 0`, `1 * 0 = 0`.
+2. GF(7)
+    * A prime-order field with seven elements: `{0, 1, 2, 3, 4, 5, 6}`.
+    * Arithmetic is performed modulo `7`:
+        * Addition: `(3 + 5) mod 7 = 1`, `4 + 6 = 3`.
+        * Multiplication: `2 * 3 = 6`, `(4 * 6) mod 7 = 3`.
+3. GF($2^3$)
+    * A field with `2^3 = 8` elements.
+    * Elements are represented as polynomials of degree less than `3` over GF(2), such as `{0, 1, x, x+1, x^2, x^2+1, x^2+x, x^2+x+1}`.
+        * The polynomial `x^2 + x + 1` is valid because the coefficients of `x^2`, `x`, and the constant term are all either `0` or `1`.
+        * A polynomial like `2x^2 + x + 3` is not valid in GF(2) because coefficients must be reduced modulo `2`, resulting in `0x^2 + x + 1` (or simply `x + 1`).
+    * Arithmetic is performed modulo an irreducible polynomial, such as `x^3 + x + 1`.
+        * An irreducible polynomial in the context of finite fields like GF($2^3$) is a polynomial that cannot be factored into smaller polynomials over GF(2). It plays a critical role in defining the field extension GF($2^n$), as it is used to perform modular arithmetic on polynomials to ensure the field has exactly $2^n$ elements.
+
+How is the irreducible polynomial selected?<br>
+1. Properties of the Polynomial:
+    * The irreducible polynomial must have a degree equal to `n` (e.g., degree `3` for GF($2^3$)).
+    * It must be irreducible over GF(2), meaning it cannot be factored into two non-constant polynomials with coefficients in GF(2).
+2. Examples:
+    * For GF($2^3$), a common irreducible polynomial is `x^3 + x + 1`.
+    * This polynomial is irreducible because it cannot be factored into smaller polynomials over GF(2).
+3. Selection Process:
+    * The irreducible polynomial is typically chosen during the design of the cryptographic system or algorithm that uses the finite field.
+    * The choice is often made to ensure efficiency in arithmetic operations and compatibility with the specific application.
+
+When is the irreducible polynomial selected?<br>
+* The irreducible polynomial is selected once during the definition of the finite field GF($2^n$).
+* It is fixed for the specific implementation of the field and does not change during runtime.
+* For example, in cryptographic systems like AES or Poseidon, the irreducible polynomial is predefined and hardcoded into the implementation.
 
 ### Pasta Elliptic Curves
 The Pasta elliptic curves are a pair of cryptographic curves designed for use in zero-knowledge proofs (ZKPs) and other cryptographic applications. These curves are specifically optimized for efficiency and security in zk-SNARKs (Zero-Knowledge Succinct Non-Interactive Arguments of Knowledge) and recursive proof systems.<br>
