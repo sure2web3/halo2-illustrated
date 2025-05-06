@@ -1,5 +1,6 @@
 # The Poseidon algebraic hash function
 
+- [Grain LFSR](#grain-lfsr)<br>
 - [Constants and Matrices](#constants-and-matrices)<br>
     - [Galois Field (GF)](#galois-field-gf)<br>
     - [Pasta Elliptic Curves](#pasta-elliptic-curves)<br>
@@ -9,6 +10,203 @@
     - [2. Spec](#2-spec)<br>
     - [3. Sponge](#3-sponge)<br>
     - [4. Hash](#4-hash)<br>
+## Grain LFSR
+Some of the most common types of round constants are linear feedback shift registers (LFSRs). Grain LFSR (Linear Feedback Shift Register) is a critical component in the Grain family of stream ciphers, which includes Grain v0, Grain v1, and Grain-128 and has been historically used to generate round constants. This family of ciphers is designed for hardware applications and aims to maintain low hardware cost. The Grain LFSR, along with a Nonlinear Feedback Shift Register (NFSR) and a nonlinear filtering function, forms the basis of these ciphers.<br>
+
+The LFSR in Grain provides a minimum period for the keystream, ensuring a certain level of security against attacks that exploit short periods. It operates on linear feedback principles, where the output is determined by a linear combination of previous bits in the register. This linear combination is defined by a feedback polynomial. The LFSR's role is to guarantee certain statistical properties and the non-repeating nature of the keystream.<br>
+
+In contrast, the NFSR, which works alongside the LFSR, introduces nonlinearity into the system. This nonlinearity is crucial for cryptographic strength, as linear systems are generally easier to attack. The NFSR's output, along with the LFSR's output, is processed through a nonlinear filtering function to produce the final keystream bit.<br>
+
+The specific construction and operation of the LFSR in Grain vary slightly between its different versions (v0, v1, and 128), primarily in terms of the length of the register and the feedback polynomial used. However, the underlying principle of providing a predictable, yet cryptographically secure, sequence of bits remains constant across all versions.<br>
+
+`FieldType` Enum<br>
+* Binary: Represents a binary field ( $\mathbb{F}_{2^n}$ ).
+* PrimeOrder: Represents a prime-order field ( $\mathbb{F}_p$ ).
+```rust
+#[derive(Debug, Clone, Copy)]
+pub(super) enum FieldType {
+    /// GF(2^n)
+    #[allow(dead_code)]
+    Binary,
+    /// GF(p)
+    PrimeOrder,
+}
+/// The tag method returns a numeric identifier for the field type (0 for binary, 1 for prime-order).
+impl FieldType {
+    fn tag(&self) -> u8 {
+        match self {
+            FieldType::Binary => 0,
+            FieldType::PrimeOrder => 1,
+        }
+    }
+}
+```
+`SboxType` Enum<br>
+Represents the type of S-box (non-linear transformation) used in Poseidon:<br>
+* Pow: Represents the S-box type for raising elements to a power (e.g., $x^5$).
+* Inv: Represents the S-box type for inversion (e.g., $x^{-1}$).
+```rust
+#[derive(Debug, Clone, Copy)]
+pub(super) enum SboxType {
+    /// x^alpha
+    Pow,
+    /// x^(-1)
+    #[allow(dead_code)]
+    Inv,
+}
+/// The tag method returns a numeric identifier for the S-box type (0 for Pow, 1 for Inv).
+impl SboxType {
+    fn tag(&self) -> u8 {
+        match self {
+            SboxType::Pow => 0,
+            SboxType::Inv => 1,
+        }
+    }
+}
+```
+`Grain` Struct<br>
+```rust
+/*
+(Rust syntax)
+Why Use pub(super)?
+1. Encapsulation:
+It allows you to expose an item to the parent module while keeping it hidden from other sibling or unrelated modules.
+This is useful for maintaining a clean and controlled API surface.
+
+2. Controlled Access:
+You might want to make certain items accessible to the parent module for internal use but not expose them to the entire crate or other modules.
+
+*/
+use bitvec::prelude::*;
+pub(super) struct Grain<F: Field> {
+    /// An 80-bit array representing the internal state of the LFSR.
+    state: BitArr!(for 80, in u8, Msb0),
+    /// Tracks the position of the next bit to be output.
+    next_bit: usize,
+    /// A marker for the associated finite field type.
+    _field: PhantomData<F>,
+}
+```
+`Grain::new` Method<br>
+| Parameters | Description |
+|------------|-------------|
+| `sbox: SboxType`| Specifies the type of S-box (non-linear transformation) used in the Poseidon permutation. | 
+| `t: u16` | Represents the width of the Poseidon state, i.e., the number of field elements in the state array. | 
+| `r_f: u16` | a. Specifies the number of full rounds in the Poseidon permutation.<br> b. In a full round, the S-box is applied to all elements of the state, followed by the MDS matrix for mixing. | 
+| `r_p: u16` | a. Specifies the number of partial rounds in the Poseidon permutation.<br> b. In a partial round, the S-box is applied to only one element of the state (usually the first element), followed by the MDS matrix. | 
+```rust
+use group::ff::{Field, FromUniformBytes, PrimeField};
+const STATE: usize = 80;
+
+impl<F: PrimeField> Grain<F> {
+    pub(super) fn new(sbox: SboxType, t: u16, r_f: u16, r_p: u16) -> Self {
+        // Initialize the LFSR state.
+        /*
+            1. LFSR State Initialization
+
+            bitarr!:
+
+            Creates a bit array to represent the internal state of the LFSR.
+            The state is initialized with all bits set to 1.
+
+            Msb0:
+
+            Specifies that the most significant bit (MSB) is stored first in the bit array.
+        */
+        let mut state = bitarr![u8, Msb0; 1; STATE];
+        /*
+            2. Setting Bits in the LFSR State
+
+            Purpose:
+
+            Encodes specific parameters into the LFSR state by setting bits at specific positions.
+
+            How It Works:
+
+            * offset: The starting position in the bit array where the bits will be set.
+            * len: The number of bits to set.
+            * value: The value to encode into the bit array.
+            * The loop iterates over the bits of value and sets them in reverse order (MSB-first) in the bit array.
+        */
+        let mut set_bits = |offset: usize, len, value| {
+            // Poseidon reference impl sets initial state bits in MSB order.
+            for i in 0..len {
+                *state.get_mut(offset + len - 1 - i).unwrap() = (value >> i) & 1 != 0;
+            }
+        };
+
+        /*
+            4. Encoding Parameters into the LFSR State
+
+            FieldType::PrimeOrder.tag():
+
+            Encodes the field type (e.g., prime-order field ( \mathbb{F}_p )) into the first 2 bits.
+
+            sbox.tag():
+
+            Encodes the S-box type (e.g., (x^5) or (x^{-1})) into the next 4 bits.
+
+            F::NUM_BITS:
+
+            Encodes the number of bits in the finite field (F) (e.g., 255 bits for ( \mathbb{F}_p )) into 12 bits.
+
+            t:
+
+            Encodes the width of the Poseidon state into 12 bits.
+
+            r_f and r_p:
+
+            Encode the number of full and partial rounds into 10 bits each.
+        */
+        set_bits(0, 2, FieldType::PrimeOrder.tag() as u16);
+        set_bits(2, 4, sbox.tag() as u16);
+        /*
+            /// How many bits are needed to represent an element of this field.
+            const NUM_BITS: u32;
+        */
+        set_bits(6, 12, F::NUM_BITS as u16);
+        set_bits(18, 12, t);
+        set_bits(30, 10, r_f);
+        set_bits(40, 10, r_p);
+
+        /*
+            5. Discarding Initial Bits
+
+            Purpose:
+
+            Discards the first 160 bits (20 bytes) of the LFSR output to ensure that the initial state does not leak information about the parameters.
+
+            How It Works:
+
+            The load_next_8_bits method generates 8 bits of output from the LFSR.
+            This process is repeated 20 times to discard the first 160 bits.
+        */
+        let mut grain = Grain {
+            state,
+            /// Tracks the position of the next bit to be output.
+            next_bit: STATE,
+            _field: PhantomData::default(),
+        };
+
+        // Discard the first 160 bits.
+        for _ in 0..20 {
+            /*
+                Why Reset next_bit to STATE? (TODO:)
+
+                After calling grain.load_next_8_bits(), the internal state is updated with new bits, but the next_bit field must be reset to indicate that the entire state is available for reading again.
+                By setting next_bit = STATE, the code ensures that the next call to get_next_bit will correctly start reading from the beginning of the updated state.
+            */
+            grain.load_next_8_bits();
+            grain.next_bit = STATE;
+        }
+
+        grain
+    }
+}
+```
+
+
+
 ## Constants and Matrices
 There are two kinds of constants for the Poseidon in halo2.<br>
 | Type | Description | File |
