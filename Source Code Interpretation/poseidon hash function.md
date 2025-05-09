@@ -5,7 +5,7 @@
         - [Uniform Distribution](#uniform-distribution)<br>
         - [Unit Test](#unit-test)<br>
 - [Maximum Distance Seprarable Matrices(MDS)](#maximum-distance-seprarable-matricesmds)<br>
-    - [The inverse of a Cauchy matrix](#the-inverse-of-a-cauchy-matrix)<br> TODO:
+    - [The inverse of a Cauchy matrix](#the-inverse-of-a-cauchy-matrix)<br>
 - [Constants and Matrices](#constants-and-matrices)<br>
     - [Galois Field (GF)](#galois-field-gf)<br>
     - [Pasta Elliptic Curves](#pasta-elliptic-curves)<br>
@@ -872,8 +872,35 @@ pub(super) fn generate_mds<F: FromUniformBytes<64> + Ord, const T: usize>(
 ```
 
 ### The inverse of a Cauchy matrix
+
+[Cauchy matrix](https://en.wikipedia.org/wiki/Cauchy_matrix)
+
 The reason for multiplying by two Lagrange polynomials (l(&xs, j, $neg_{ys}[i]$) and l(&$neg_{ys}$, i, xs[j])) is due to the mathematical properties of the inverse of a Cauchy matrix. Specifically, the formula for the inverse of a Cauchy matrix involves two Lagrange polynomials to account for the relationships between the rows and columns of the matrix.
-TODO:
+
+1. Cauchy Matrix and Its Inverse<br>
+A Cauchy matrix is defined as:
+
+$[ a_{ij} = \frac{1}{x_i - y_j}, \quad x_i - y_j \neq 0 ]$
+
+The inverse of a Cauchy matrix is given by:
+
+$[ b_{ij} = (x_j - y_i) \cdot A_j(y_i) \cdot B_i(x_j) ]$
+
+Where:
+
+* ($ A_j(y_i)$ ) is the Lagrange polynomial for the ( $j$ )-th column, evaluated at ( $y_i$ ).
+* ( $B_i(x_j)$ ) is the Lagrange polynomial for the ( $i$ )-th row, evaluated at ( $x_j$ ).
+
+2. Why Two Lagrange Polynomials?<br> 
+    * First Lagrange Polynomial: ( l(&xs, j, $neg_{ys}[i]$) )<br>
+        * This corresponds to ( $A_j(y_i)$ ), the Lagrange polynomial for the ( $j$ )-th column.
+        * It ensures that the inverse matrix element ( $b_{ij}$ ) correctly accounts for the relationship between the ( $j$ )-th column of the original matrix and the ( $i$ )-th row of the inverse matrix.
+    * Second Lagrange Polynomial: ( l(&$neg_{ys}$, i, xs[j]) )<br>
+        * This corresponds to ( $B_i(x_j)$ ), the Lagrange polynomial for the ( $i$ )-th row.
+        * It ensures that the inverse matrix element ( $b_{ij}$ ) correctly accounts for the relationship between the ( $i$ )-th row of the original matrix and the ( $j$ )-th column of the inverse matrix.
+    * Combined Effect
+        * The product of the two Lagrange polynomials ensures that the inverse matrix element ( $b_{ij}$ ) satisfies the mathematical properties of the inverse of a Cauchy matrix.
+        * This guarantees that the matrix multiplication of the original matrix and its inverse results in the identity matrix.
 
 ## Constants and Matrices
 There are two kinds of constants for the Poseidon in halo2.<br>
@@ -1190,6 +1217,97 @@ pub fn generate_constants<
     let (mds, mds_inv) = mds::generate_mds::<F, T>(&mut grain, S::secure_mds());
 
     (round_constants, mds, mds_inv)
+}
+```
+
+#### P128Pow5T3
+This code defines the Poseidon-128 hash function using the ( $x^5$ ) S-box, with a state width of 3 field elements and parameters optimized for 128-bit security. The implementation is generic over two finite fields: Pallas field (Fp) and Vesta field (Fq), which are part of the Pasta curve cycle.
+```rust
+/// Poseidon-128 using the $x^5$ S-box, with a width of 3 field elements, and the
+/// standard number of rounds for 128-bit security "with margin".
+///
+/// The standard specification for this set of parameters (on either of the Pasta
+/// fields) uses $R_F = 8, R_P = 56$. This is conveniently an even number of
+/// partial rounds, making it easier to construct a Halo 2 circuit.
+#[derive(Debug)]
+/*
+P128Pow5T3:
+    Represents the Poseidon-128 hash function with the following parameters:
+        S-box: ( x^5 ) (a non-linear transformation).
+        Width: 3 field elements (state size).
+        Rounds: ( R_F = 8 ) full rounds and ( R_P = 56 ) partial rounds.
+    The name P128Pow5T3 indicates:
+        P128: 128-bit security.
+        Pow5: The ( x^5 ) S-box.
+        T3: State width of 3 elements.
+*/
+pub struct P128Pow5T3;
+
+/// Implementation for Fp (Pallas Field)
+/*
+    Implements the Spec trait for the Pallas field (Fp), with a state width of 3 and a rate of 2.
+*/
+impl Spec<Fp, 3, 2> for P128Pow5T3 {
+    fn full_rounds() -> usize {
+        8
+    }
+
+    fn partial_rounds() -> usize {
+        56
+    }
+    /*
+        Defines the S-box as ( x^5 ), a non-linear transformation applied to state elements during the Poseidon permutation.
+        Uses the pow_vartime method to compute ( x^5 ) efficiently.
+    */
+    fn sbox(val: Fp) -> Fp {
+        val.pow_vartime([5])
+    }
+
+    fn secure_mds() -> usize {
+        unimplemented!()
+    }
+
+    /*
+        Returns the precomputed constants for the Poseidon permutation:
+            Round Constants: Used to add randomness to the state in each round.
+            MDS Matrix: Ensures diffusion (mixing) of the state.
+            Inverse MDS Matrix: Used for certain cryptographic operations.
+    */
+    fn constants() -> (Vec<[Fp; 3]>, Mds<Fp, 3>, Mds<Fp, 3>) {
+        (
+            super::fp::ROUND_CONSTANTS[..].to_vec(),
+            super::fp::MDS,
+            super::fp::MDS_INV,
+        )
+    }
+}
+
+/// Implementation for Fq (Vesta Field)
+/// This implementation is identical to the one for Fp, but it operates over the Vesta field (Fq).
+impl Spec<Fq, 3, 2> for P128Pow5T3 {
+    fn full_rounds() -> usize {
+        8
+    }
+
+    fn partial_rounds() -> usize {
+        56
+    }
+
+    fn sbox(val: Fq) -> Fq {
+        val.pow_vartime([5])
+    }
+
+    fn secure_mds() -> usize {
+        unimplemented!()
+    }
+
+    fn constants() -> (Vec<[Fq; 3]>, Mds<Fq, 3>, Mds<Fq, 3>) {
+        (
+            super::fq::ROUND_CONSTANTS[..].to_vec(),
+            super::fq::MDS,
+            super::fq::MDS_INV,
+        )
+    }
 }
 ```
 
